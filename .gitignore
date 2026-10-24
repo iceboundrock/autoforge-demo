@@ -1,0 +1,26 @@
+# AutoForge runtime state: state.json, run logs (every prompt and agent
+# output, redacted only to a baseline) and the agents' read context.
+# Never commit or publish it unredacted (docs/RUNBOOK.md, "Redaction review").
+.autoforge/
+# A personal AutoForge configuration; the demo's own is autoforge.demo.yaml.
+autoforge.yaml
+autoforge.local.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/

@@ -1,0 +1,224 @@
+# AutoForge configuration of the end-to-end demo (iceboundrock/AutoForge#261).
+#
+# This is the file the demo run uses, committed here so that the providers,
+# models, efforts and bounds are disclosed. AutoForge never looks for a
+# configuration file by itself; every command passes it, before the
+# subcommand, together with the run's state directory:
+#
+#   autoforge --config autoforge.demo.yaml --state-dir .autoforge/issue-<N> <command>
+#
+# Every key below is one AutoForge reads (an unknown key is a load error, not
+# an ignored typo). What is not set here is AutoForge's built-in default.
+# Written against AutoForge 12e10f4 (autoforge.example.yaml,
+# docs/configuration.md); the runbook says how the file was validated.
+#
+# The run's resource bounds
+# -------------------------
+# The controller enforces these itself, from persisted state, so `resume`
+# continues the same budget. A budget written into a prompt is not a limit,
+# and AutoForge sees no money. On a subscription login these bounds are the
+# run's whole resource control; on an API key they sit under the spend limit
+# the provider enforces (docs/RUNBOOK.md, "Model spend"). A bound that fires
+# ends the run in BLOCKED with the reason: nothing is merged, the PR stays.
+#
+#   workflow.max_review_rounds: 3
+#       Review rounds per PR. A clean round 1 is the whole loop; findings
+#       allow at most two FIX passes, and findings in round 3 block instead
+#       of starting a FIX that could never be reviewed.
+#   workflow.max_total_steps: 20
+#       Every step of the run, each failed or retried agent attempt included,
+#       counted across `resume`. A clean run takes 3 (INITIALIZING,
+#       ANALYZE_EXECUTE, REVIEW), one fix iteration 5, two fix iterations 7.
+#   execution.max_correction_attempts: 1
+#       One correction prompt when an agent exits 0 with a malformed
+#       CONTROL_RESULT; a second malformed result fails the step.
+#   profiles.<name>.idle_timeout_seconds / max_runtime_seconds
+#       An agent is killed after 900 s without output, and at its ceiling
+#       however busy it is: 45 min to implement, 30 min to fix or review.
+#       Loop detection (`kill`, the default) also stops an agent that keeps
+#       repeating itself. A killed agent leaves the phase unchanged and
+#       nothing is retried automatically: the operator decides to `resume`.
+#   execution.command_timeout_seconds: 600
+#       Wall-clock limit of each candidate validation command below and of
+#       the controller's own git commands.
+#   review.replan.enabled: false
+#       No replacement PR: a review loop that does not converge blocks for
+#       the maintainer instead of closing this PR and starting another.
+#
+# Every model call of the run is made through one of the seven profiles
+# below. With these bounds and the merge gate closed only the first four are
+# reachable (analyze_execute, fix, review_round_1, review_round_2_5); the
+# other three are listed because AutoForge requires them to be configured.
+
+version: 1
+
+state_dir: .autoforge
+
+prompt_version: v1
+
+execution:
+  default_idle_timeout_seconds: 900
+  # Ceiling for a profile that sets none of its own (every profile below does).
+  default_max_runtime_seconds: 1800
+  command_timeout_seconds: 600
+  max_correction_attempts: 1
+  # The built-in allow-list is kept (PATH, HOME, locale, TMPDIR, XDG_*_HOME,
+  # git author settings, proxy and CA variables), plus what each provider
+  # adds for its own CLI (claude: ANTHROPIC_*, CLAUDE_*; opencode:
+  # OPENCODE_*, OPENAI_*, ANTHROPIC_*, GEMINI_*, GOOGLE_*). Nothing extra.
+  env_allowlist_extra: []
+  # Per-issue agent worktrees under <git common dir>/autoforge/worktrees/<n>.
+  worktree_dir: null
+  loop_detection:
+    # mode unset: `kill`, except on Pi and in UPDATE_EPIC (neither used here).
+    max_cycle_period: 4
+    max_cycle_repeats: 8
+    novelty_window_seconds: 1800
+    max_line_repeats: 200
+
+safety:
+  # The merge gate stays closed: the run stops at READY_FOR_MERGE and the
+  # maintainer merges by hand, if at all. `--allow-merge` alone cannot open it.
+  allow_merge: false
+  protected_merge_paths:
+    - ".github/workflows/"
+  # The aggregate check of .github/workflows/ci.yml, which a ruleset on
+  # `main` requires (`autoforge doctor` checks the ruleset).
+  required_checks:
+    - "ci"
+  verify_check_definition: true
+  # A FIX that asks the controller to comment on the issue waits for the
+  # maintainer's explicit approval of that exact comment.
+  acceptance_actions: approve
+
+merge:
+  # Unreachable with the gate closed; stated so the defaults are on record.
+  method: squash
+  delete_branch: false
+  max_verification_attempts: 5
+  verification_commands: []
+
+# Run by the controller, not by an agent, against the exact commit an agent
+# hands back, in a fresh export of its tree, before anything is pushed; and
+# for the PR head before every review. The same commands as CI and README.
+# They run as the operator's user, with the network, under
+# `sandbox.mode: disabled`.
+validation:
+  scope: candidate-tree
+  commands:
+    - ["uvx", "--python", "3.12", "--from", "pytest==9.1.1", "pytest", "-q"]
+    - ["uvx", "--python", "3.12", "ruff@0.16.10", "check", "."]
+    - ["uvx", "--python", "3.12", "ruff@0.16.10", "format", "--check", "."]
+
+workflow:
+  max_review_rounds: 3
+  stagnation_identical_rounds: 2
+  stagnation_unchanged_count_rounds: 3
+  max_total_steps: 20
+
+review:
+  replan:
+    enabled: false
+    # Thresholds may not exceed workflow.max_review_rounds, even when disabled.
+    soft_threshold: 3
+    hard_threshold: 3
+    stagnation_window: 3
+    max_findings_per_round: 2
+    max_replans_per_issue: 0
+
+# AutoForge's default routing, stated explicitly. The CLIs resolve `fable` and
+# the `openai/...` ids to concrete model versions; the run log records them.
+profiles:
+  analyze_execute:
+    provider: claude
+    model: fable
+    effort: high
+    command: claude
+    idle_timeout_seconds: 900
+    max_runtime_seconds: 2700
+    options:
+      permission_mode: bypassPermissions
+      output_format: stream-json
+
+  fix:
+    provider: claude
+    model: fable
+    effort: high
+    command: claude
+    idle_timeout_seconds: 900
+    max_runtime_seconds: 1800
+    options:
+      permission_mode: bypassPermissions
+      output_format: stream-json
+
+  review_round_1:
+    provider: opencode
+    model: openai/gpt-5.6-luna
+    effort: high
+    command: opencode
+    idle_timeout_seconds: 900
+    max_runtime_seconds: 1800
+    options:
+      output_format: default
+      auto_approve: false
+
+  review_round_2_5:
+    provider: opencode
+    model: openai/gpt-5.6-terra
+    effort: high
+    command: opencode
+    idle_timeout_seconds: 900
+    max_runtime_seconds: 1800
+    options:
+      output_format: default
+      auto_approve: false
+
+  # Unreachable with workflow.max_review_rounds: 3; AutoForge requires it.
+  review_round_6_plus:
+    provider: opencode
+    model: openai/gpt-5.6-sol
+    effort: medium
+    command: opencode
+    idle_timeout_seconds: 900
+    max_runtime_seconds: 1800
+    options:
+      output_format: default
+      auto_approve: false
+
+  # Unreachable with review.replan.enabled: false; AutoForge requires it.
+  replan_reexecute:
+    provider: opencode
+    model: openai/gpt-5.6-terra
+    effort: high
+    command: opencode
+    idle_timeout_seconds: 900
+    max_runtime_seconds: 2700
+    options:
+      output_format: default
+      auto_approve: false
+
+  # Unreachable with the merge gate closed (UPDATE_EPIC follows a merge).
+  update_epic:
+    provider: opencode
+    model: openai/gpt-5.6-sol
+    effort: high
+    command: opencode
+    idle_timeout_seconds: 900
+    max_runtime_seconds: 1200
+    options:
+      output_format: default
+      auto_approve: false
+
+github:
+  command: gh
+  timeout_seconds: 120
+
+sandbox:
+  # Logical isolation only. The run's containment is the dedicated OS user,
+  # VM or container it runs in (docs/RUNBOOK.md, "Containment"). Switch to
+  # `required` only on a host where `autoforge doctor` shows that the outer
+  # sandbox can be enforced, and say so in the write-up.
+  mode: disabled
+  validation_network: host
+  premerge_network: host
+  read_only_paths: []

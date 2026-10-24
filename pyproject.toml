@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wordstat"
+dynamic = ["version"]
+description = "Count lines, words and characters (the demo project for AutoForge)"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+wordstat = "wordstat.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "wordstat.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The tests import the package from src/ without installing it, so the same
+# command works in CI, in a fresh checkout and in AutoForge's candidate export.
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

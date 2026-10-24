@@ -1,0 +1,73 @@
+# Hosted checks for the AutoForge demo repository.
+#
+# AutoForge reads these results; it does not run them. Its defaults expect:
+#   * one check named exactly `ci` (`safety.required_checks: [ci]`), which a
+#     ruleset on `main` requires (docs/RUNBOOK.md);
+#   * with `safety.verify_check_definition`, that `ci` on a pull request is a
+#     GitHub Actions run at the PR head whose jobs and steps match those of
+#     this workflow's own `push` run at the tip of `main`.
+# Hence `push` only on `main` (a PR head gets exactly one `ci`, from its
+# `pull_request` run, and `main`'s tip gets the reference run), no matrix and
+# no job that exists on one event only, and an aggregate `ci` job that fails
+# when a job it needs failed, was cancelled or was skipped (a skipped check
+# counts as passing for AutoForge).
+#
+# The commands are the ones README.md lists and autoforge.demo.yaml runs as
+# candidate validation; keep the three in step. No secret is used. Agents
+# cannot change this file through AutoForge: the demo token has no Workflows
+# permission, so a push touching .github/workflows/ is refused.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (py3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.24"
+          python-version: "3.12"
+          enable-cache: false
+      - name: pytest
+        run: uvx --python 3.12 --from pytest==9.1.1 pytest -q
+
+  lint:
+    name: lint (py3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.24"
+          python-version: "3.12"
+          enable-cache: false
+      - name: ruff check
+        run: uvx --python 3.12 ruff@0.16.10 check .
+      - name: ruff format
+        run: uvx --python 3.12 ruff@0.16.10 format --check .
+
+  ci:
+    # The one stable check name the ruleset and AutoForge require.
+    name: ci
+    needs: [test, lint]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every job to have succeeded
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        run: |
+          echo "test=${{ needs.test.result }} lint=${{ needs.lint.result }}"
+          exit 1
