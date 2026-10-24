@@ -78,10 +78,36 @@ own worktree, an allow-listed environment without a GitHub or git
 credential). It is **not sandboxed**: an agent that goes looking can read
 what this user can, the demo token in the controller's environment and the
 model logins included. The containment is therefore that this user holds
-nothing else, that the token can do little and expires soon (section 4), that
-the model logins are spend-limited or subscription-bounded (section 6), and
-that only collaborators can write on the repository while a run is active
-(section 5).
+nothing else, that the token is scoped to this repository and expires soon
+(section 4), that the model logins are spend-limited or subscription-bounded
+(section 6), and that only collaborators can write on the repository while
+a run is active (section 5).
+
+**The token can merge, and GitHub records the maintainer.** The ruleset
+requires a pull request and the `ci` check but no approving review
+(`required_approving_review_count: 0`): the PR's author is the maintainer's
+own identity, and GitHub does not let an author approve their own PR. The
+token's permissions (section 4) are enough to squash-merge a green PR.
+AutoForge's merge gate is closed (`safety.allow_merge: false`), but that is
+the controller's restraint, not GitHub's. An agent that reads the token
+under `disabled` could merge its own PR, push or comment, and GitHub would
+show the maintainer as the actor, exactly like the human merge the
+write-up reports. So the write-up claims a human merge only on evidence,
+never on the setting:
+
+- before writing it, compare the PR's timeline and `merged_by`/`merged_at`
+  (`gh api repos/iceboundrock/autoforge-demo/issues/<PR>/timeline`,
+  `gh pr view <PR> --json mergedBy,mergedAt,mergeCommit`), every push to
+  `autoforge/<issue>` and every comment with the human-actions list
+  (section 12) and the run's trace. Anything by the maintainer's identity
+  that is in neither is reported as unexplained;
+- the write-up says that GitHub did not enforce the human merge.
+
+Stronger, and each a choice to make before the run: issue the token from a
+dedicated machine account with the Write role and require one approving
+review in the ruleset, so that GitHub itself needs the maintainer's
+approval; or run with `sandbox.mode: required` (below), so that no agent
+can read the token.
 
 `sandbox.mode: required` is stronger where it works: on a host where
 `autoforge doctor` shows `outer sandbox: capability (...): supported`, every
@@ -177,6 +203,35 @@ The distribution is renamed `autoforge-cli` (#256, #295). The PyPI project
 AutoForge reads `autoforge.demo.yaml` with PyYAML when it is installed and
 with its own YAML subset parser otherwise; for this file both give the same
 configuration (checked when the file was written).
+
+**Whatever the route, the controller's own files belong to this user.**
+Under `disabled` an agent runs as this user and can change the installed
+AutoForge (route A or C) or the checkout it runs from (route B) between two
+invocations, for example before a `resume`, and change it back before the
+run ends; the `git status` check in section 8 sees only an edit left in
+place. Two measures, in order of strength:
+
+1. **Install it as another user,** one the demo user cannot write as, so
+   that it can run AutoForge but not change it (for example root-owned under
+   `/opt`, with uv's `UV_TOOL_DIR`, `UV_TOOL_BIN_DIR` and
+   `UV_PYTHON_INSTALL_DIR` pointing there). This recipe has not been tried
+   for this demo; if you use it, record the commands.
+2. **At least, record a digest** of the installed files before the first
+   invocation and compare it after each one and at the end. Install with
+   `--compile-bytecode` (add it to the route's `uv tool install`), so that
+   running AutoForge writes no `.pyc` file into its own environment:
+
+   ```bash
+   AF_TOOL="$(uv tool dir)/autoforge-cli"   # "autoforge" for a commit before #256
+   af_digest() { find "$AF_TOOL" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum; }
+   af_digest > "$EV/autoforge-install.sha256"   # before the first invocation
+   af_digest | cmp - "$EV/autoforge-install.sha256" && echo unchanged   # after each one
+   ```
+
+   On route B the code is the checkout, so run the same digest over
+   `git -C ~/src/AutoForge ls-files -z` as well. A digest shows a change
+   only if it is still there when you compare, which is why measure 1 is
+   stronger.
 
 ## 4. The GitHub token
 
@@ -627,7 +682,7 @@ by the agents it launched.
 | 7 | | maintainer | Started the run | `autoforge --config autoforge.demo.yaml --state-dir .autoforge/issue-<n> run --epic <url> --issue <url>` | | run id |
 | | | maintainer | (each `resume`, `unblock`, approval, comment) | the exact command | the reason given | step or comment |
 | | | maintainer | Lifted the interaction limit | `gh api -X DELETE ...` | run over | |
-| | | maintainer | Merged the PR (if) | `gh pr merge ...` | human merge | merge commit |
+| | | maintainer | Merged the PR (if) | `gh pr merge ...` | human merge | merge commit; `mergedBy`/`mergedAt` checked against this list (section 1) |
 | | | maintainer | Revoked the token | settings UI | | |
 
 ## 13. The write-up
