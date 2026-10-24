@@ -54,8 +54,6 @@ version: 1
 
 state_dir: .autoforge
 
-prompt_version: v1
-
 execution:
   default_idle_timeout_seconds: 900
   # Ceiling for a profile that sets none of its own (every profile below does).
